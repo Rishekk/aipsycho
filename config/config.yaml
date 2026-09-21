@@ -1,0 +1,59 @@
+project:
+  name: "psychological-state-detection"
+  version: "0.1.0"
+
+data:
+  raw_path: "data/raw/"
+  processed_path: "data/processed/"
+  annotations_path: "data/annotations/"
+  batch_size: 32
+  num_workers: 4
+  val_split: 0.2
+  test_split: 0.1
+
+training:
+  epochs: 50
+  learning_rate: 0.001
+  optimizer: "adam"
+  weight_decay: 1e-4
+  scheduler: "cosine"
+  device: "cuda"  # or "cpu" or "mps" for Apple Silicon
+  checkpoint_dir: "models/"
+  save_every: 5
+
+models:
+  body_agent:
+    model_type: "lstm"
+    input_size: 99       # 33 landmarks * 3 (x, y, z)
+    hidden_size: 256
+    num_layers: 2
+    dropout: 0.3
+    num_classes: 5
+
+  face_agent:
+    backbone: "resnet50"
+    pretrained: true
+    input_size: 224
+    num_classes: 5
+    dropout: 0.3
+
+  speech_agent:
+    feature_type: "mfcc"
+    n_mfcc: 40
+    sample_rate: 16000
+    n_fft: 512
+    hop_length: 256
+    num_classes: 5
+
+  fusion:
+    hidden_dim: 256
+    num_heads: 4
+    dropout: 0.3
+    num_classes: 5
+
+classes:
+  - "calm"
+  - "stressed"
+  - "anxious"
+  - "confident"
+  - "frustrated"

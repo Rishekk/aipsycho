@@ -1,0 +1,39 @@
+body_agent:
+  pose_estimator:
+    model_complexity: 1
+    min_detection_confidence: 0.5
+    min_tracking_confidence: 0.5
+  lstm:
+    hidden_size: 256
+    num_layers: 2
+    bidirectional: false
+    dropout: 0.3
+  sequence_length: 30  # frames
+
+face_agent:
+  face_mesh:
+    max_num_faces: 1
+    min_detection_confidence: 0.5
+    min_tracking_confidence: 0.5
+  cnn:
+    backbone: "resnet50"
+    pretrained: true
+    freeze_layers: 6
+    input_size: [224, 224]
+
+speech_agent:
+  audio:
+    sample_rate: 16000
+    chunk_duration: 2.0  # seconds
+    overlap: 0.5
+  features:
+    n_mfcc: 40
+    n_fft: 512
+    hop_length: 256
+    n_mels: 128
+
+fusion:
+  strategy: "attention"  # early, late, attention
+  hidden_dim: 256
+  num_heads: 4
+  num_layers: 2
