@@ -79,6 +79,11 @@ python scripts/train_body_agent.py \
     --model lstm --epochs 60
 ```
 
+Poses are normalised **per frame** (hip-centred, torso length 1) by one function
+(`src/data_processing/pose_norm.py`) used both when training and by the live `BodyClassifier`.
+A body checkpoint trained before this change used a different (first-frame) normalisation and
+must be retrained.
+
 ### Speech Agent (RAVDESS)
 
 ```bash
@@ -111,6 +116,12 @@ python scripts/train_fusion.py \
     --strategy attention
 ```
 
+The multimodal dataset must be built with `MultimodalDatasetBuilder`, which records each
+sample's source clip. Training then splits **by clip** (all windows cut from one video stay on
+one side), because overlapping windows from the same clip are near-duplicates. This is not a
+subject-level split: if the same person appears in several clips they can land on both sides.
+Datasets built before this change have no source field and are rejected with a clear error.
+
 ---
 
 ## Evaluation
@@ -123,6 +134,7 @@ for model selection:
 | RAVDESS  | actors 1-16 | actors 17-20 | actors 21-24 (2 male + 2 female held-out in val and test) |
 | FER-2013 | Training | PublicTest (CSV) or 10% hold-out of train (folder layout) | PrivateTest / `test/` |
 | RAF-DB   | train minus 10% | 10% hold-out of train | test |
+| Fusion (clips) | clips, by source | whole clips moved to val (`--val-split`) | none yet |
 
 > The numbers in `results/metrics/*.json` were produced **before** this fix: the speech split
 > was a random file-level shuffle (every RAVDESS actor appeared in both train and test) and
@@ -238,5 +250,7 @@ pip install pytest
 python -m pytest
 ```
 
-The suite covers the subject-independent splits, modality gating, post-processing, the
-tracker and the session logger, and runs without torch installed.
+The suite covers the subject-independent and clip-level splits, modality gating (live and
+batch), the shared pose normalisation, post-processing, the tracker and the session logger.
+It runs without torch installed; the torch, OpenCV and MediaPipe parts are stubbed or not
+covered, so the live pipeline still needs a manual run on a machine with a camera.
