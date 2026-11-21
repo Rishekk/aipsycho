@@ -6,14 +6,25 @@ from src.utils.logger import get_logger
 
 logger = get_logger("post_processor")
 
-# State → suggested intervention message
+# State → description of what the model actually saw.
+# The class names are an artefact of the training-label mapping in
+# data_processing/dataset_loader.py (EMOTION_TO_STATE): the models were trained on
+# acted/posed *emotion* datasets, so each class is really an expression cue, not a
+# measurement of stress, anxiety, etc. Messages say so and give no advice.
 STATE_MESSAGES = {
-    "calm":       "You appear calm and composed.",
-    "confident":  "You appear confident and engaged.",
-    "stressed":   "Signs of stress detected. Consider taking a deep breath.",
-    "anxious":    "Signs of anxiety detected. Try grounding techniques.",
-    "frustrated": "Signs of frustration detected. Take a short break if possible.",
+    "calm":       "Neutral / calm expression cues.",
+    "confident":  "Positive / happy expression cues.",
+    "stressed":   "Sad / low-mood expression cues.",
+    "anxious":    "Fear / surprise expression cues.",
+    "frustrated": "Anger / disgust expression cues.",
+    "uncertain":  "Low confidence - no reliable cue.",
 }
+
+DISCLAIMER = (
+    "Research prototype. Outputs are affect-cue estimates from models trained on "
+    "acted-emotion datasets. They are not a measure of stress, anxiety or any "
+    "psychological state, and not a diagnosis."
+)
 
 # State → color (R, G, B) for UI rendering
 STATE_COLORS = {
@@ -57,16 +68,16 @@ class PostProcessor:
         """
         self._frame_count += 1
 
-        # Apply confidence threshold
+        # Apply confidence threshold. A low-confidence frame is shown as "uncertain"
+        # (it used to fall through to the previous majority state, hiding the
+        # uncertainty) and is not counted in the history or session statistics.
         if confidence < self.confidence_threshold:
-            display_state = "uncertain"
+            smoothed_state = "uncertain"
         else:
-            display_state = state
             self._history.append(state)
             self._session_counts[state] = self._session_counts.get(state, 0) + 1
-
-        # Majority vote over history window
-        smoothed_state = self._majority_vote() if self._history else display_state
+            # Majority vote over history window
+            smoothed_state = self._majority_vote()
 
         return {
             "state":         smoothed_state,

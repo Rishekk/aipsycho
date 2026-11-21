@@ -1,6 +1,14 @@
 # AI-Powered Psychological State Detection
 
-A real-time multimodal system for detecting psychological states (calm, stressed, anxious, confident, frustrated) from facial expressions, body language, and speech.
+A real-time multimodal research prototype that estimates **affect cues** (calm, stressed, anxious, confident, frustrated) from facial expressions, body language, and speech.
+
+> **Status: research prototype.** The models are trained on acted/posed *emotion* datasets
+> (FER-2013, RAF-DB, RAVDESS) and the five classes are a relabelling of those emotions
+> (see [What the classes mean](#what-the-classes-mean)). The output is **not** a measure of
+> stress, anxiety or any psychological state, and not a diagnosis. Do not use it to evaluate
+> people (e.g. employees, students, job candidates); in the EU that use is prohibited by the
+> AI Act. How to find out whether the approach holds up on real data:
+> [docs/VALIDATION_PLAN.md](docs/VALIDATION_PLAN.md).
 
 **Team:** Nitin Kumar Jha, Rishek Raj, Risheek Yadav
 **Supervisor:** Dr. Dhirendra Kumar
@@ -16,7 +24,15 @@ Webcam (Video) ──► Body Agent  (MediaPipe + LSTM)      ──┼──► 
 Microphone     ──► Speech Agent (CNN-LSTM / wav2vec2)  ──┘
 ```
 
-The system uses three specialized agents, each independently analyzing one modality, then combines their outputs through attention-based fusion.
+The system uses three specialized agents, each independently analyzing one modality.
+The **live pipeline uses late fusion with equal weights** (no validation data supports any
+other weighting). Early and attention fusion are implemented and trainable, but they need a
+labelled multimodal dataset that this repository does not include, and they have not been
+evaluated.
+
+A modality runs only when a **trained checkpoint** is supplied. Untrained models emit noise,
+so there is no "demo mode" any more. The rule-based body heuristics are unvalidated and must
+be switched on explicitly (`--allow-rule-based-body` / the sidebar checkbox).
 
 ---
 
@@ -99,6 +115,20 @@ python scripts/train_fusion.py \
 
 ## Evaluation
 
+Splits are **subject-independent** where subject identity exists, and test data is never used
+for model selection:
+
+| Dataset  | train | val (checkpoint selection) | test (report once) |
+|----------|-------|----------------------------|--------------------|
+| RAVDESS  | actors 1-16 | actors 17-20 | actors 21-24 (2 male + 2 female held-out in val and test) |
+| FER-2013 | Training | PublicTest (CSV) or 10% hold-out of train (folder layout) | PrivateTest / `test/` |
+| RAF-DB   | train minus 10% | 10% hold-out of train | test |
+
+> The numbers in `results/metrics/*.json` were produced **before** this fix: the speech split
+> was a random file-level shuffle (every RAVDESS actor appeared in both train and test) and
+> the face checkpoint was selected on the same split it was reported on. Treat them as
+> optimistic and regenerate them.
+
 ```bash
 # Face agent
 python scripts/evaluate_model.py face \
@@ -126,14 +156,15 @@ python scripts/evaluate_model.py body \
 streamlit run app/streamlit_app.py
 ```
 
-Open `http://localhost:8501`. Enable **Demo Mode** to run without trained models (generates synthetic predictions from a live webcam feed).
-
-To run with real models, enter checkpoint paths in the sidebar and disable Demo Mode.
+Open `http://localhost:8501`, enter at least one trained checkpoint path in the sidebar
+(or tick the experimental rule-based body option), confirm that everyone in view and earshot
+has agreed to be analysed, and press Start. Video and audio are analysed locally and are not
+saved; the CSV session log contains only per-frame probabilities.
 
 ### Headless (Terminal)
 
 ```bash
-python app/main.py \
+python -m app.main --consent \
     --face-model   models/face_agent/face_agent_best.pth \
     --body-model   models/body_agent/body_lstm_best.pth \
     --speech-model models/speech_agent/speech_cnn_lstm_best.pth
@@ -172,7 +203,12 @@ app/
 
 ---
 
-## Psychological State Classes
+## What the classes mean
+
+The model outputs one of five labels, but each label is just a regrouping of the emotion
+categories in the training data (`EMOTION_TO_STATE` in `src/data_processing/dataset_loader.py`).
+A sad face is labelled "stressed" and a surprised face "anxious" by construction, not because
+the data measures stress or anxiety.
 
 | Index | State       | Mapped From (emotions)           |
 |-------|-------------|----------------------------------|
@@ -192,3 +228,15 @@ app/
 | Face     | RAF-DB    | [Website](http://www.whdeng.cn/raf/model1.html) |
 | Speech   | RAVDESS   | [Zenodo](https://zenodo.org/record/1188976) |
 | Body     | Custom    | Record pose sequences with provided scripts |
+
+---
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+The suite covers the subject-independent splits, modality gating, post-processing, the
+tracker and the session logger, and runs without torch installed.

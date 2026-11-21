@@ -58,8 +58,7 @@ class SessionLogger:
         ----------
         frame_no  : Global frame counter for the session.
         person_id : Integer ID assigned by PersonTracker.
-        result    : Result dict produced by _demo_result_for_person or the
-                    RealtimePredictor pipeline.
+        result    : Result dict produced by the RealtimePredictor pipeline.
         """
         probs = result.get("probs", {})
         row = {
