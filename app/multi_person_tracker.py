@@ -3,15 +3,11 @@ IoU-based multi-person tracker.
 
 Assigns stable integer IDs to face bounding boxes across frames so each
 individual in the frame keeps a consistent identity throughout a session.
-Each tracked person also maintains its own independent demo-mode state drift.
-"""
-import random
-from collections import deque
-from typing import Dict, List, Optional, Tuple
 
-import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config.constants import PSYCHOLOGICAL_STATES
+Note: the Streamlit app currently analyses a single person and does not use this
+tracker; it is kept (and tested) as the building block for per-person analysis.
+"""
+from typing import Dict, List, Optional, Tuple
 
 
 def _iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
@@ -28,20 +24,12 @@ def _iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
 
 
 class TrackedPerson:
-    """Holds per-person tracking state and independent demo prediction state."""
+    """Per-person tracking state: stable id, last bounding box, frames since last seen."""
 
     def __init__(self, pid: int, bbox: Tuple[int, int, int, int]):
         self.pid   = pid
         self.bbox  = bbox
         self.lost  = 0                          # consecutive frames without a detection
-        # Independent demo-mode state drift — each person starts at a random state
-        self._state_idx = random.randint(0, len(PSYCHOLOGICAL_STATES) - 1)
-
-    def next_demo_state(self) -> str:
-        """Return the next psychological state for this person, drifting slowly."""
-        if random.random() < 0.05:
-            self._state_idx = (self._state_idx + 1) % len(PSYCHOLOGICAL_STATES)
-        return PSYCHOLOGICAL_STATES[self._state_idx]
 
 
 class PersonTracker:

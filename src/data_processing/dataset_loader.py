@@ -20,6 +20,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from PIL import Image
 from typing import List, Tuple, Optional, Dict
 
+from .splits import split_ravdess_files, holdout_split
 from .preprocessor import preprocess_audio, audio_to_mfcc_tensor, normalize_pose
 from .data_augmentation import (get_face_train_transforms, get_face_val_transforms,
                                  AudioAugmentor, PoseAugmentor)
@@ -96,7 +97,7 @@ class FER2013Dataset(Dataset):
         if os.path.exists(csv_path):
             self._load_csv(csv_path, split)
         else:
-            self._load_dir(os.path.join(root, split))
+            self._load_dir(root, split)
 
         logger.info(f"FER2013 [{split}]: {len(self.samples)} samples")
 
@@ -114,16 +115,33 @@ class FER2013Dataset(Dataset):
             img = np.stack([pixels, pixels, pixels], axis=-1)  # grayscale → 3ch
             self.samples.append((img, label_idx))
 
-    def _load_dir(self, root: str):
-        for emotion_dir in sorted(os.listdir(root)):
+    def _load_dir(self, root: str, split: str):
+        """
+        Folder layout: <root>/train/<emotion>/*.png and <root>/test/<emotion>/*.png.
+
+        If there is no <root>/val folder, validation is a deterministic 10% hold-out
+        of train, so checkpoint selection never touches the test split.
+        """
+        has_val_dir = os.path.isdir(os.path.join(root, "val"))
+        src_split = "train" if (split == "val" and not has_val_dir) else split
+
+        items = []  # (image_path, label_idx)
+        split_root = os.path.join(root, src_split)
+        for emotion_dir in sorted(os.listdir(split_root)):
             label_idx = map_to_psych_state(emotion_dir)
             if label_idx is None:
                 continue
-            dir_path = os.path.join(root, emotion_dir)
-            for img_path in glob.glob(os.path.join(dir_path, "*.jpg")) + \
-                            glob.glob(os.path.join(dir_path, "*.png")):
-                img = np.array(Image.open(img_path).convert("RGB"))
-                self.samples.append((img, label_idx))
+            dir_path = os.path.join(split_root, emotion_dir)
+            for img_path in sorted(glob.glob(os.path.join(dir_path, "*.jpg")) +
+                                   glob.glob(os.path.join(dir_path, "*.png"))):
+                items.append((img_path, label_idx))
+
+        if not has_val_dir and split in ("train", "val"):
+            items = holdout_split(items, split)
+
+        for img_path, label_idx in items:
+            img = np.array(Image.open(img_path).convert("RGB"))
+            self.samples.append((img, label_idx))
 
     def __len__(self):
         return len(self.samples)
@@ -160,28 +178,36 @@ class RAFDBDataset(Dataset):
         label_file = os.path.join(root, "EmoLabel", "list_patition_label.txt")
         img_dir    = os.path.join(root, "Image", "aligned")
 
+        # RAF-DB ships only train/test. "val" is a deterministic 10% hold-out of train
+        # so checkpoint selection never touches the test split.
+        src_split = "train" if split in ("train", "val") else "test"
+        items: List[Tuple[str, int]] = []
+
         if os.path.exists(label_file) and os.path.isdir(img_dir):
-            prefix = "train" if split == "train" else "test"
             with open(label_file) as f:
                 for line in f:
                     fname, label_id = line.strip().split()
-                    if not fname.startswith(prefix):
+                    if not fname.startswith(src_split):
                         continue
                     emotion  = self.RAF_LABELS.get(int(label_id))
                     psych_id = map_to_psych_state(emotion) if emotion else None
                     if psych_id is None:
                         continue
-                    self.samples.append((os.path.join(img_dir, fname), psych_id))
+                    items.append((os.path.join(img_dir, fname), psych_id))
         else:
             # directory layout fallback
-            split_dir = os.path.join(root, split)
+            split_dir = os.path.join(root, src_split)
             if os.path.isdir(split_dir):
-                for emotion_dir in os.listdir(split_dir):
+                for emotion_dir in sorted(os.listdir(split_dir)):
                     psych_id = map_to_psych_state(emotion_dir.split("_")[-1])
                     if psych_id is None:
                         continue
-                    for p in glob.glob(os.path.join(split_dir, emotion_dir, "*.jpg")):
-                        self.samples.append((p, psych_id))
+                    for p in sorted(glob.glob(os.path.join(split_dir, emotion_dir, "*.jpg"))):
+                        items.append((p, psych_id))
+
+        if split in ("train", "val"):
+            items = holdout_split(items, split)
+        self.samples.extend(items)
 
         logger.info(f"RAF-DB [{split}]: {len(self.samples)} samples")
 
@@ -223,12 +249,10 @@ class RAVDESSDataset(Dataset):
         self.augmentor = AudioAugmentor(sr=sr) if augment else None
         self.samples: List[Tuple[str, int]] = []
 
+        # Speaker-independent split: each actor appears in exactly one of
+        # train (actors 1-16) / val (17-20) / test (21-24). See splits.py.
         all_files = sorted(glob.glob(os.path.join(root, "**", "*.wav"), recursive=True))
-        random.seed(42)
-        random.shuffle(all_files)
-
-        split_idx = int(len(all_files) * 0.8)
-        files = all_files[:split_idx] if split == "train" else all_files[split_idx:]
+        files = split_ravdess_files(all_files, split)
 
         for path in files:
             fname     = os.path.basename(path)
@@ -356,7 +380,7 @@ def get_face_loaders(root: str, dataset: str = "fer2013",
     """Returns (train_loader, val_loader) for a face dataset."""
     DS = FER2013Dataset if dataset == "fer2013" else RAFDBDataset
     train_ds = DS(root, split="train")
-    val_ds   = DS(root, split="test")
+    val_ds   = DS(root, split="val")   # NOT "test": test is reserved for final reporting
     sampler  = make_weighted_sampler(train_ds)
     pin = _pin_memory()
     train_loader = DataLoader(train_ds, batch_size=batch_size,

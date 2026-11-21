@@ -61,7 +61,7 @@ def load_speech(args, device):
     load_checkpoint(model, None, args.checkpoint, str(device))
     model.eval()
 
-    ds = RAVDESSDataset(args.data_root, split="val", augment=False)
+    ds = RAVDESSDataset(args.data_root, split="test", augment=False)  # held-out actors 21-24
     loader = DataLoader(ds, batch_size=args.batch_size,
                         shuffle=False, num_workers=args.workers)
     return model, loader
