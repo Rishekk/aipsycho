@@ -5,6 +5,7 @@ from typing import Tuple, Dict, Optional
 from .pose_estimator import PoseEstimator
 from .feature_extractor import BodyFeatureExtractor
 from .temporal_model import BodyLSTM
+from src.data_processing.pose_norm import normalize_pose, normalize_pose_sequence
 from config.constants import PSYCHOLOGICAL_STATES, IDX_TO_STATE, NUM_CLASSES
 from src.utils.logger import get_logger
 
@@ -22,6 +23,10 @@ class BodyClassifier:
 
     Maintains a rolling sequence buffer so it can be called frame-by-frame
     during real-time inference.
+
+    Input contract (trained LSTM): every frame is normalised with
+    ``normalize_pose`` (hip-centred, torso-scaled) before it enters the buffer, exactly
+    as ``PoseSequenceDataset`` does at training time. Do not feed raw landmarks.
     """
 
     def __init__(self, model_path: str = None, sequence_length: int = 30,
@@ -83,7 +88,7 @@ class BodyClassifier:
         if landmarks is None:
             return None
 
-        feature_vec = self.feature_extractor.get_feature_vector(landmarks)
+        feature_vec = self.feature_extractor.get_feature_vector(normalize_pose(landmarks))
         self._buffer.append(feature_vec)
 
         if len(self._buffer) < self.sequence_length:
@@ -110,6 +115,7 @@ class BodyClassifier:
             avg_scores = np.mean(scores_list, axis=0)
             return self._rule_agent._scores_to_result(avg_scores)
 
+        sequence = normalize_pose_sequence(sequence)  # same per-frame normalisation as training
         tensor = torch.tensor(sequence, dtype=torch.float32).unsqueeze(0).to(self.device)
         return self._run_inference(tensor)
 
@@ -126,7 +132,7 @@ class BodyClassifier:
         if landmarks is None:
             return None
 
-        feature_vec = self.feature_extractor.get_feature_vector(landmarks)
+        feature_vec = self.feature_extractor.get_feature_vector(normalize_pose(landmarks))
         self._buffer.append(feature_vec)
 
         if len(self._buffer) < self.sequence_length:

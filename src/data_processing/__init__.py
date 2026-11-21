@@ -17,7 +17,8 @@ _LAZY = {
     # preprocessor
     "preprocess_face": ".preprocessor", "preprocess_face_batch": ".preprocessor",
     "preprocess_audio": ".preprocessor", "audio_to_mfcc_tensor": ".preprocessor",
-    "normalize_pose": ".preprocessor",
+    "normalize_pose": ".pose_norm",
+    "normalize_pose_sequence": ".pose_norm",
     # data_augmentation
     "get_face_train_transforms": ".data_augmentation",
     "get_face_val_transforms": ".data_augmentation",

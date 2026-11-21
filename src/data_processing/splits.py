@@ -12,7 +12,7 @@ validation split (used for checkpoint selection / early stopping) and test split
 """
 import os
 import random
-from typing import Dict, List, Optional, Sequence, Set, TypeVar
+from typing import Dict, Hashable, List, Optional, Sequence, Set, Tuple, TypeVar
 
 T = TypeVar("T")
 
@@ -94,3 +94,51 @@ def holdout_split(items: Sequence[T], split: str,
     if split == "val":
         return [ordered[i] for i in sorted(val_idx)]
     return [ordered[i] for i in range(len(ordered)) if i not in val_idx]
+
+
+def group_holdout_split(groups: Sequence[Hashable], val_fraction: float = 0.2,
+                        seed: int = 42) -> Tuple[List[int], List[int]]:
+    """
+    Split sample *indices* so that no group appears on both sides.
+
+    Use when several samples come from the same source (e.g. overlapping windows cut
+    from one video clip): a sample-level random split would put near-duplicate windows
+    in both train and validation and inflate the validation score.
+
+    Args:
+        groups: one group key per sample (e.g. the source clip path).
+        val_fraction: target share of *samples* in validation. Whole groups are moved,
+            so the achieved share is approximate (at least one group, and never all).
+        seed: shuffling seed; the result does not depend on the order of ``groups``.
+
+    Returns:
+        (train_indices, val_indices), both ascending and disjoint, covering all samples.
+
+    Raises:
+        ValueError: fewer than 2 distinct groups, or ``val_fraction`` outside (0, 1).
+    """
+    if not 0.0 < val_fraction < 1.0:
+        raise ValueError("val_fraction must be in (0, 1)")
+    counts: Dict[Hashable, int] = {}
+    for g in groups:
+        counts[g] = counts.get(g, 0) + 1
+    if len(counts) < 2:
+        raise ValueError(
+            f"need at least 2 distinct groups to make a group-level split, got {len(counts)}"
+        )
+
+    order = sorted(counts, key=str)
+    random.Random(seed).shuffle(order)
+    target = val_fraction * len(groups)
+
+    val_groups: Set[Hashable] = set()
+    n_val = 0
+    for g in order:
+        if n_val >= target or len(val_groups) == len(order) - 1:
+            break
+        val_groups.add(g)
+        n_val += counts[g]
+
+    train_idx = [i for i, g in enumerate(groups) if g not in val_groups]
+    val_idx = [i for i, g in enumerate(groups) if g in val_groups]
+    return train_idx, val_idx

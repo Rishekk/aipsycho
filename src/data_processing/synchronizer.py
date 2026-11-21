@@ -168,6 +168,9 @@ class MultimodalDatasetBuilder:
                             frames=sample.frame_sequence,
                             audio=sample.audio_chunk,
                             label=np.array(sample.label),
+                            # Source clip, so training can split by clip (windows cut
+                            # from one video must not land on both sides of a split).
+                            source=np.array(os.path.relpath(video_path, root)),
                         )
                         count += 1
                 except Exception as e:

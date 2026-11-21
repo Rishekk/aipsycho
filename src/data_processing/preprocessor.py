@@ -66,19 +66,5 @@ def audio_to_mfcc_tensor(audio: np.ndarray, sr: int = 16000,
 
 
 # ── Pose ──────────────────────────────────────────────────────────────────────
-
-def normalize_pose(landmarks: np.ndarray) -> np.ndarray:
-    """
-    Center + scale pose landmarks so the torso length = 1.
-    landmarks: (33, 3)  →  (33, 3)
-    """
-    lm = landmarks.copy()
-    # Center on hip midpoint
-    hip_mid = (lm[23] + lm[24]) / 2
-    lm -= hip_mid
-    # Scale by torso length (hip → shoulder midpoint)
-    shoulder_mid = (lm[11] + lm[12]) / 2
-    torso_len = np.linalg.norm(shoulder_mid)
-    if torso_len > 1e-6:
-        lm /= torso_len
-    return lm.astype(np.float32)
+# Defined once in pose_norm.py (NumPy-only) so training and inference share it.
+from .pose_norm import normalize_pose, normalize_pose_sequence  # noqa: E402,F401

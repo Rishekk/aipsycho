@@ -1,3 +1,5 @@
+import random
+
 import pytest
 
 from src.data_processing.splits import (
@@ -76,3 +78,69 @@ def test_holdout_split_is_disjoint_complete_and_deterministic():
 def test_holdout_split_rejects_test_split():
     with pytest.raises(ValueError):
         holdout_split(["a", "b"], "test")
+
+
+# ── group_holdout_split (fusion training data) ───────────────────────────────
+
+from src.data_processing.splits import group_holdout_split  # noqa: E402
+
+
+def _clips(n_clips=10, windows_per_clip=6):
+    return [f"clip_{c:02d}" for c in range(n_clips) for _ in range(windows_per_clip)]
+
+
+def test_group_split_never_shares_a_group():
+    groups = _clips()
+    train, val = group_holdout_split(groups, val_fraction=0.2, seed=0)
+    assert {groups[i] for i in train}.isdisjoint({groups[i] for i in val})
+
+
+def test_group_split_covers_every_sample_exactly_once():
+    groups = _clips()
+    train, val = group_holdout_split(groups)
+    assert sorted(train + val) == list(range(len(groups)))
+    assert not set(train) & set(val)
+
+
+def test_group_split_is_deterministic_and_order_independent():
+    groups = _clips()
+    a = group_holdout_split(groups, seed=7)
+    assert a == group_holdout_split(groups, seed=7)
+
+    # Same samples listed in a different order -> same clips end up in validation.
+    perm = list(reversed(range(len(groups))))
+    shuffled = [groups[i] for i in perm]
+    t2, v2 = group_holdout_split(shuffled, seed=7)
+    assert {shuffled[i] for i in v2} == {groups[i] for i in a[1]}
+
+
+def test_group_split_fraction_is_close_to_target():
+    groups = _clips(n_clips=20, windows_per_clip=5)
+    _, val = group_holdout_split(groups, val_fraction=0.2)
+    assert 0.15 <= len(val) / len(groups) <= 0.30
+
+
+def test_group_split_two_groups_gives_one_each():
+    train, val = group_holdout_split(["a", "a", "b"], val_fraction=0.9)
+    assert len(train) >= 1 and len(val) >= 1
+
+
+def test_group_split_rejects_single_group_and_bad_fraction():
+    with pytest.raises(ValueError):
+        group_holdout_split(["only"] * 5)
+    with pytest.raises(ValueError):
+        group_holdout_split(["a", "b"], val_fraction=1.0)
+
+
+def test_random_sample_split_leaks_but_group_split_does_not():
+    """Documents why the old random_split was wrong for windowed clips."""
+    groups = _clips()
+    rng = random.Random(0)
+    idx = list(range(len(groups)))
+    rng.shuffle(idx)
+    cut = int(len(idx) * 0.8)
+    old_train, old_val = idx[:cut], idx[cut:]
+    assert {groups[i] for i in old_train} & {groups[i] for i in old_val}  # leaks
+
+    new_train, new_val = group_holdout_split(groups)
+    assert not {groups[i] for i in new_train} & {groups[i] for i in new_val}

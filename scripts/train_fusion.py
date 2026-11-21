@@ -19,13 +19,14 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 
 from src.agents.face_agent.emotion_cnn import EmotionCNN, FacePreprocessor
 from src.agents.body_agent.temporal_model import BodyLSTM
 from src.agents.speech_agent.speech_model import SpeechCNNLSTM
 from src.fusion.attention_fusion import AttentionFusionModel
 from src.fusion.early_fusion import EarlyFusionModel
+from src.data_processing.splits import group_holdout_split
 from src.training.trainer import Trainer
 from src.training.losses import LabelSmoothingLoss
 from src.utils.model_utils import get_device, load_checkpoint
@@ -44,6 +45,8 @@ class EmbeddingDataset(Dataset):
         frames : (T, H, W, 3)  BGR video frames
         audio  : (sr*duration,) float32 audio
         label  : int
+        source : str           source clip (written by MultimodalDatasetBuilder);
+                               used to keep a clip's windows on one side of the split
 
     This dataset extracts embeddings offline (much faster than re-running agents
     every epoch).
@@ -53,6 +56,7 @@ class EmbeddingDataset(Dataset):
                  face_model: nn.Module, body_model: nn.Module, speech_model: nn.Module,
                  device: torch.device):
         self.samples = []  # [(body_emb, face_emb, speech_emb, label)]
+        self.groups  = []  # source clip of each sample, parallel to self.samples
 
         face_prep = FacePreprocessor()
         files = sorted(f for f in os.listdir(npz_dir) if f.endswith(".npz"))
@@ -62,7 +66,8 @@ class EmbeddingDataset(Dataset):
         body_model.eval()
         speech_model.eval()
 
-        from src.data_processing.preprocessor import audio_to_mfcc_tensor, normalize_pose
+        from src.data_processing.preprocessor import audio_to_mfcc_tensor
+        from src.data_processing.pose_norm import normalize_pose
 
         from src.agents.body_agent.pose_estimator import PoseEstimator
         pose_estimator = PoseEstimator()
@@ -72,6 +77,12 @@ class EmbeddingDataset(Dataset):
             frames = data["frames"]   # (T, H, W, 3)
             audio  = data["audio"]    # float32 array
             label  = int(data["label"])
+            if "source" not in data.files:
+                raise ValueError(
+                    f"{fname} has no 'source' field, so samples cannot be split by clip. "
+                    "Rebuild the dataset with MultimodalDatasetBuilder (it now records it)."
+                )
+            source = str(data["source"])
 
             with torch.no_grad():
                 # Face: use middle frame
@@ -93,6 +104,7 @@ class EmbeddingDataset(Dataset):
                 speech_emb = speech_model.get_features(audio_t).squeeze(0).cpu()
 
             self.samples.append((body_emb, face_emb, speech_emb, label))
+            self.groups.append(source)
 
         pose_estimator.close()
 
@@ -138,7 +150,9 @@ def parse_args():
     p.add_argument("--workers",      type=int,   default=0)
     p.add_argument("--checkpoint-dir", default="models/fusion")
     p.add_argument("--patience",     type=int,   default=10)
-    p.add_argument("--val-split",    type=float, default=0.2)
+    p.add_argument("--val-split",    type=float, default=0.2,
+                   help="Target share of samples in validation (whole clips are moved)")
+    p.add_argument("--seed",         type=int,   default=42, help="Seed for the clip split")
     return p.parse_args()
 
 
@@ -167,9 +181,21 @@ def main():
     full_ds = EmbeddingDataset(args.data_root, face_model, body_model,
                                 speech_model, device)
 
-    n_val    = max(1, int(len(full_ds) * args.val_split))
-    n_train  = len(full_ds) - n_val
-    train_ds, val_ds = torch.utils.data.random_split(full_ds, [n_train, n_val])
+    # Split by source clip, not by sample: windows cut from the same video are near
+    # duplicates, so a random sample split leaks them into validation and inflates it.
+    # (This is clip-level, not subject-level: the same person in different clips can
+    # still appear on both sides. Subject ids are needed for a subject-level split.)
+    train_idx, val_idx = group_holdout_split(full_ds.groups, args.val_split, args.seed)
+    train_ds, val_ds = Subset(full_ds, train_idx), Subset(full_ds, val_idx)
+    logger.info(
+        f"Clip-level split: {len({full_ds.groups[i] for i in train_idx})} train clips "
+        f"({len(train_idx)} samples) / {len({full_ds.groups[i] for i in val_idx})} val clips "
+        f"({len(val_idx)} samples)"
+    )
+    missing = {s[3] for s in full_ds.samples} - {full_ds.samples[i][3] for i in val_idx}
+    if missing:
+        logger.warning(f"Validation split has no samples for class indices {sorted(missing)}; "
+                       "validation F1 will be unreliable. Add more clips.")
 
     # Sample embeddings to get dims
     (body_emb, face_emb, speech_emb), _ = full_ds[0]
