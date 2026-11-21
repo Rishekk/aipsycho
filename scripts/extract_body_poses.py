@@ -37,7 +37,7 @@ import cv2
 from tqdm import tqdm
 
 from src.agents.body_agent.pose_estimator import PoseEstimator
-from src.data_processing.preprocessor import normalize_pose
+from src.data_processing.pose_norm import normalize_pose
 from src.data_processing.dataset_loader import EMOTION_TO_STATE
 from config.constants import STATE_TO_IDX, PSYCHOLOGICAL_STATES
 from src.utils.logger import get_logger

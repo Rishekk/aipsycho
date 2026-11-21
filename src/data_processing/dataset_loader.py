@@ -21,7 +21,8 @@ from PIL import Image
 from typing import List, Tuple, Optional, Dict
 
 from .splits import split_ravdess_files, holdout_split
-from .preprocessor import preprocess_audio, audio_to_mfcc_tensor, normalize_pose
+from .preprocessor import preprocess_audio, audio_to_mfcc_tensor
+from .pose_norm import normalize_pose_sequence
 from .data_augmentation import (get_face_train_transforms, get_face_val_transforms,
                                  AudioAugmentor, PoseAugmentor)
 from config.constants import STATE_TO_IDX, NUM_CLASSES
@@ -342,8 +343,8 @@ class PoseSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         seq, label = self.samples[idx]
-        seq = normalize_pose(seq.reshape(-1, 3)).reshape(self.seq_len, 99) \
-              if seq.ndim == 2 else seq
+        # Per-frame normalisation, identical to what BodyClassifier applies live.
+        seq = normalize_pose_sequence(seq)
         if self.augmentor:
             seq = self.augmentor.augment(seq)
         return torch.tensor(seq, dtype=torch.float32), torch.tensor(label, dtype=torch.long)
